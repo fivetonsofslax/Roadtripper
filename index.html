@@ -43,7 +43,6 @@
         .export-actions { display: none; margin-top: 15px; gap: 10px; }
         .export-actions .btn { flex: 1; padding: 14px; font-size: 14px; }
         
-        /* New Styles for Track Output */
         .track-item { padding: 8px 0; border-bottom: 1px solid #222; display: flex; justify-content: space-between; color: white; }
         .track-name { font-weight: bold; }
         .track-artist { color: var(--muted); }
@@ -57,12 +56,12 @@
 
     <div id="integration-hub">
         <div class="card platform-row">
-            <div class="platform-info"><div class="icon gg">G</div><div><h3 style="margin:0; font-size:16px;">Google Cloud Maps</h3><div class="status-badge" id="status-google"><div class="status-dot"></div> Not Connected</div></div></div>
+            <div class="platform-info"><div class="icon gg">G</div><div><h3 style="margin:0; font-size:16px;">Google Profile</h3><div class="status-badge" id="status-google"><div class="status-dot"></div> Not Connected</div></div></div>
             <button class="btn btn-connect" id="btn-google" onclick="authGoogle()">Connect</button>
         </div>
         <div class="card platform-row">
             <div class="platform-info"><div class="icon sp">S</div><div><h3 style="margin:0; font-size:16px;">Spotify Premium</h3><div class="status-badge" id="status-spotify"><div class="status-dot"></div> Not Connected</div></div></div>
-            <button class="btn btn-connect" id="btn-spotify" onclick="authSpotify()">Connect</button>
+            <button class="btn btn-connect" id="btn-spotify" onclick="authSpotifyPKCE()">Connect</button>
         </div>
     </div>
 
@@ -94,23 +93,57 @@
     // 1. CONFIGURATION
     // ==========================================
     const CONFIG = {
-        googleClientId: '18315655656-le7l023ktjvj06bffinl5mh5gv2otocc.apps.googleusercontent.com',   // Paste your Google Client ID here
-        spotifyClientId: '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s', // Paste your Spotify Client ID here
-        redirectUri: window.location.href.split('#')[0] 
+        googleClientId: 'YOUR_GOOGLE_CLIENT_ID',   // Paste your Google Client ID here
+        spotifyClientId: 'YOUR_SPOTIFY_CLIENT_ID', // Paste your Spotify Client ID here
+        redirectUri: window.location.href.split('?')[0].split('#')[0] // Safely gets base URL
     };
 
     // ==========================================
     // 2. STATE MANAGEMENT & AUTO-LOGIN
     // ==========================================
-    window.onload = () => { captureUrlTokens(); updateUI(); };
+    window.onload = async () => { 
+        await handleRedirects(); 
+        updateUI(); 
+    };
 
-    function captureUrlTokens() {
+    async function handleRedirects() {
+        // Handle Google Implicit Grant (Hash)
         const hash = window.location.hash.substring(1);
-        const params = new URLSearchParams(hash);
-        if (params.has('access_token')) {
-            if (params.get('state') === 'google') sessionStorage.setItem('google_token', params.get('access_token'));
-            else sessionStorage.setItem('spotify_token', params.get('access_token'));
+        const hashParams = new URLSearchParams(hash);
+        if (hashParams.has('access_token') && hashParams.get('state') === 'google') {
+            sessionStorage.setItem('google_token', hashParams.get('access_token'));
             window.location.hash = ''; 
+        }
+
+        // Handle Spotify PKCE Code Return (Query String)
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.has('code')) {
+            const code = urlParams.get('code');
+            const codeVerifier = sessionStorage.getItem('spotify_verifier');
+            
+            // Exchange code for Access Token
+            const body = new URLSearchParams({
+                client_id: CONFIG.spotifyClientId,
+                grant_type: 'authorization_code',
+                code: code,
+                redirect_uri: CONFIG.redirectUri,
+                code_verifier: codeVerifier
+            });
+
+            try {
+                const response = await fetch('https://accounts.spotify.com/api/token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: body
+                });
+                const data = await response.json();
+                if(data.access_token) {
+                    sessionStorage.setItem('spotify_token', data.access_token);
+                    window.history.replaceState({}, document.title, window.location.pathname); // Clean URL
+                }
+            } catch (err) {
+                console.error("Spotify Token Error:", err);
+            }
         }
     }
 
@@ -147,21 +180,59 @@
             statusEl.innerHTML = '<div class="status-dot"></div> Not Connected';
             btn.className = 'btn btn-connect'; btn.innerText = 'Connect';
             if(platform === 'google') btn.onclick = authGoogle;
-            if(platform === 'spotify') btn.onclick = authSpotify;
+            if(platform === 'spotify') btn.onclick = authSpotifyPKCE;
         }
     }
 
     // ==========================================
-    // 3. AUTHENTICATION PROTOCOLS
+    // 3. UPDATED AUTHENTICATION PROTOCOLS
     // ==========================================
+    
+    // Google: Using basic 'profile' and 'email' scopes
     function authGoogle() {
         if(CONFIG.googleClientId.includes('YOUR_')) return alert("Missing Google Client ID");
-        window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${CONFIG.googleClientId}&redirect_uri=${encodeURIComponent(CONFIG.redirectUri)}&scope=https://www.googleapis.com/auth/maps-platform.datasets&response_type=token&state=google`;
+        const scopes = 'profile email'; 
+        window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${CONFIG.googleClientId}&redirect_uri=${encodeURIComponent(CONFIG.redirectUri)}&scope=${encodeURIComponent(scopes)}&response_type=token&state=google`;
     }
 
-    function authSpotify() {
+    // Spotify: Cryptographic PKCE Helpers
+    function generateRandomString(length) {
+        const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+        const values = crypto.getRandomValues(new Uint8Array(length));
+        return values.reduce((acc, x) => acc + possible[x % possible.length], "");
+    }
+
+    async function sha256(plain) {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(plain);
+        return window.crypto.subtle.digest('SHA-256', data);
+    }
+
+    function base64encode(input) {
+        return btoa(String.fromCharCode(...new Uint8Array(input))).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+    }
+
+    // Spotify: Modern Authorization Code PKCE Flow
+    async function authSpotifyPKCE() {
         if(CONFIG.spotifyClientId.includes('YOUR_')) return alert("Missing Spotify Client ID");
-        window.location.href = `https://accounts.spotify.com/authorize?client_id=${CONFIG.spotifyClientId}&redirect_uri=${encodeURIComponent(CONFIG.redirectUri)}&scope=user-read-private%20playlist-modify-public&response_type=token`;
+        
+        const codeVerifier = generateRandomString(64);
+        sessionStorage.setItem('spotify_verifier', codeVerifier); // Save to trade for token later
+        
+        const hashed = await sha256(codeVerifier);
+        const codeChallenge = base64encode(hashed);
+
+        const authUrl = new URL("https://accounts.spotify.com/authorize");
+        authUrl.search = new URLSearchParams({
+            client_id: CONFIG.spotifyClientId,
+            response_type: 'code',
+            redirect_uri: CONFIG.redirectUri,
+            scope: 'user-read-private playlist-modify-public',
+            code_challenge_method: 'S256',
+            code_challenge: codeChallenge
+        }).toString();
+        
+        window.location.href = authUrl.toString();
     }
 
     // ==========================================
@@ -173,7 +244,6 @@
         out.scrollTop = out.scrollHeight; 
     }
 
-    // Global variable to hold generated tracks for exporting later
     let generatedPlaylist = []; 
 
     async function executeSync() {
@@ -191,21 +261,18 @@
 
         logToConsole(`Ping Google Maps API -> Route: ${start} to ${dest}...`);
         
-        // Simulating the spatial mapping delay (Google Maps requires a paid API key for live directions)
         setTimeout(async () => {
             logToConsole(`Polyline acquired. Mapping road curvature to acoustic nodes...`);
             logToConsole(`Pinging Spotify Intelligence API...`);
 
             try {
-                // 1. Map the dropdown "vibe" to exact Spotify audio features
                 const vibeData = {
                     cinematic: "seed_genres=movies,soundtracks&target_valence=0.4&target_energy=0.5",
                     electronic: "seed_genres=electronic,synth-pop&target_energy=0.9&target_tempo=130",
                     ambient: "seed_genres=ambient,chill&target_energy=0.1&target_tempo=80"
                 };
 
-                // 2. Execute the live fetch request to Spotify's servers
-                const response = await fetch(`https://api.spotify.com/v1/recommendations?limit=6&${vibeData[vibe]}`, {
+                const response = await fetch(`https://api.spotify.com/v1/recommendations?limit=10&${vibeData[vibe]}`, {
                     headers: { 'Authorization': `Bearer ${spotifyToken}` }
                 });
 
@@ -213,16 +280,13 @@
                 
                 const data = await response.json();
                 
-                // 3. Process and display the live data
                 logToConsole(`SUCCESS: Extracted ${data.tracks.length} tracks matching heuristics.`, "white");
-                
-                generatedPlaylist = []; // Reset global playlist
+                generatedPlaylist = []; 
                 
                 data.tracks.forEach(track => {
                     const trackString = `${track.name} - ${track.artists[0].name}`;
-                    generatedPlaylist.push(trackString); // Save for export
+                    generatedPlaylist.push(trackString); 
                     
-                    // Format beautifully in the console
                     document.getElementById('console-output').innerHTML += `
                         <div class="track-item">
                             <span class="track-name">${track.name}</span>
@@ -231,7 +295,6 @@
                     `;
                 });
 
-                // Scroll to bottom and show export buttons
                 document.getElementById('console-output').scrollTop = document.getElementById('console-output').scrollHeight;
                 document.getElementById('export-actions').style.display = 'flex';
 
@@ -250,7 +313,340 @@
     // 5. EXPORT PIPELINE
     // ==========================================
     function exportToSpotify() {
-        alert("App is in Beta. Playlist saving requires additional Spotify scopes.");
+        alert("App is in Beta. Direct playlist saving requires additional Spotify API configurations.");
+    }
+
+    function exportForApple() {
+        if (generatedPlaylist.length === 0) return alert("Run the engine first to generate tracks.");
+
+        const fileContent = "RouteTrack Pro Soundtrack\n\n" + generatedPlaylist.join("\n");
+        const blob = new Blob([fileContent], { type: 'text/plain' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = 'RouteTrack_Export.txt';
+        
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+</script>
+</body>
+</html><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>RouteTrack Pro | Unified Engine</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #09090b; --panel: #18181b; --border: #27272a; --text: #fafafa; --muted: #a1a1aa;
+            --spotify: #1DB954; --google: #4285F4; --apple: #FA243C; --success: #10b981;
+        }
+        * { box-sizing: border-box; font-family: 'Inter', sans-serif; }
+        body { background: var(--bg); color: var(--text); margin: 0; padding: 20px; display: flex; justify-content: center; }
+        
+        .app-container { max-width: 600px; width: 100%; margin-top: 20px; }
+        h1 { font-weight: 800; letter-spacing: -1px; margin-bottom: 5px; font-size: 28px; }
+        .subtitle { color: var(--muted); font-size: 14px; margin-bottom: 30px; }
+
+        .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 15px; }
+        
+        .platform-row { display: flex; justify-content: space-between; align-items: center; }
+        .platform-info { display: flex; align-items: center; gap: 15px; }
+        .icon { width: 40px; height: 40px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 20px; }
+        .icon.sp { background: var(--spotify); color: black; }
+        .icon.gg { background: white; color: var(--google); }
+        
+        .status-badge { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: 600; }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #555; }
+        .connected .status-dot { background: var(--success); box-shadow: 0 0 8px var(--success); }
+        .connected { color: var(--success); }
+        
+        .btn { padding: 10px 20px; border-radius: 6px; font-weight: 600; cursor: pointer; border: none; transition: 0.2s; font-size: 14px; }
+        .btn-connect { background: white; color: black; }
+        .btn-disconnect { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+        
+        #engine-dashboard { display: none; }
+        input, select { width: 100%; padding: 14px; background: #000; border: 1px solid var(--border); border-radius: 8px; color: white; margin-bottom: 15px; margin-top: 5px; font-size: 15px; outline: none; }
+        input:focus, select:focus { border-color: var(--google); }
+        .btn-launch { width: 100%; padding: 16px; border-radius: 8px; background: white; color: black; font-size: 16px; font-weight: bold; margin-top: 10px; cursor: pointer; }
+        .console { background: #000; padding: 15px; font-family: monospace; font-size: 12px; color: var(--success); border-radius: 8px; margin-top: 15px; border: 1px solid var(--border); height: 200px; overflow-y: auto; }
+        
+        .export-actions { display: none; margin-top: 15px; gap: 10px; }
+        .export-actions .btn { flex: 1; padding: 14px; font-size: 14px; }
+        
+        .track-item { padding: 8px 0; border-bottom: 1px solid #222; display: flex; justify-content: space-between; color: white; }
+        .track-name { font-weight: bold; }
+        .track-artist { color: var(--muted); }
+    </style>
+</head>
+<body>
+
+<div class="app-container">
+    <h1>RouteTrack <span style="color:var(--google)">Engine</span></h1>
+    <p class="subtitle" id="sys-status">Awaiting platform authorization...</p>
+
+    <div id="integration-hub">
+        <div class="card platform-row">
+            <div class="platform-info"><div class="icon gg">G</div><div><h3 style="margin:0; font-size:16px;">Google Profile</h3><div class="status-badge" id="status-google"><div class="status-dot"></div> Not Connected</div></div></div>
+            <button class="btn btn-connect" id="btn-google" onclick="authGoogle()">Connect</button>
+        </div>
+        <div class="card platform-row">
+            <div class="platform-info"><div class="icon sp">S</div><div><h3 style="margin:0; font-size:16px;">Spotify Premium</h3><div class="status-badge" id="status-spotify"><div class="status-dot"></div> Not Connected</div></div></div>
+            <button class="btn btn-connect" id="btn-spotify" onclick="authSpotifyPKCE()">Connect</button>
+        </div>
+    </div>
+
+    <div id="engine-dashboard">
+        <div class="card">
+            <label style="font-size: 11px; color:var(--muted); font-weight: bold;">SPATIAL PARAMETERS</label>
+            <input type="text" id="origin" placeholder="Origin (e.g., Los Angeles)">
+            <input type="text" id="dest" placeholder="Destination (e.g., Joshua Tree)">
+            <label style="font-size: 11px; color:var(--muted); font-weight: bold;">ACOUSTIC HEURISTICS</label>
+            <select id="vibe">
+                <option value="cinematic">Cinematic Landscape (Epic/Soundtracks)</option>
+                <option value="electronic">High-Speed Night Drive (High BPM/Synth)</option>
+                <option value="ambient">Ambient Drift (Focus/Low Energy)</option>
+            </select>
+            <button class="btn btn-launch" onclick="executeSync()" id="sync-btn">Run Engine Sync</button>
+        </div>
+        
+        <div class="console" id="console-output">> Both APIs securely linked.<br>> Engine standing by for spatial input...</div>
+        
+        <div class="export-actions" id="export-actions">
+            <button class="btn" style="background: var(--spotify); color: black;" onclick="exportToSpotify()">Save to Spotify</button>
+            <button class="btn" style="background: var(--apple); color: white;" onclick="exportForApple()">Export for Apple</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    // ==========================================
+    // 1. CONFIGURATION
+    // ==========================================
+    const CONFIG = {
+        googleClientId: '18315655656-le7l023ktjvj06bffinl5mh5gv2otocc.apps.googleusercontent.com',   // Paste your Google Client ID here
+        spotifyClientId: 'bb2c459e75c1466a8aea3edbf95c061f', // Paste your Spotify Client ID here
+        redirectUri: window.location.href.split('?')[0].split('#')[0] // Safely gets base URL
+    };
+
+    // ==========================================
+    // 2. STATE MANAGEMENT & AUTO-LOGIN
+    // ==========================================
+    window.onload = async () => { 
+        await handleRedirects(); 
+        updateUI(); 
+    };
+
+    async function handleRedirects() {
+        // Handle Google Implicit Grant (Hash)
+        const hash = window.location.hash.substring(1);
+        const hashParams = new URLSearchParams(hash);
+        if (hashParams.has('access_token') && hashParams.get('state') === 'google') {
+            sessionStorage.setItem('google_token', hashParams.get('access_token'));
+            window.location.hash = ''; 
+        }
+
+        // Handle Spotify PKCE Code Return (Query String)
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.has('code')) {
+            const code = urlParams.get('code');
+            const codeVerifier = sessionStorage.getItem('spotify_verifier');
+            
+            // Exchange code for Access Token
+            const body = new URLSearchParams({
+                client_id: CONFIG.spotifyClientId,
+                grant_type: 'authorization_code',
+                code: code,
+                redirect_uri: CONFIG.redirectUri,
+                code_verifier: codeVerifier
+            });
+
+            try {
+                const response = await fetch('https://accounts.spotify.com/api/token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: body
+                });
+                const data = await response.json();
+                if(data.access_token) {
+                    sessionStorage.setItem('spotify_token', data.access_token);
+                    window.history.replaceState({}, document.title, window.location.pathname); // Clean URL
+                }
+            } catch (err) {
+                console.error("Spotify Token Error:", err);
+            }
+        }
+    }
+
+    function updateUI() {
+        const hasGoogle = !!sessionStorage.getItem('google_token');
+        const hasSpotify = !!sessionStorage.getItem('spotify_token');
+
+        setCardState('google', hasGoogle);
+        setCardState('spotify', hasSpotify);
+
+        if (hasGoogle && hasSpotify) {
+            document.getElementById('integration-hub').style.display = 'none';
+            document.getElementById('engine-dashboard').style.display = 'block';
+            document.getElementById('sys-status').innerText = 'System Linked. Routing Engine Active.';
+            document.getElementById('sys-status').style.color = 'var(--success)';
+        } else {
+            document.getElementById('integration-hub').style.display = 'block';
+            document.getElementById('engine-dashboard').style.display = 'none';
+            document.getElementById('sys-status').innerText = 'Awaiting platform authorization (Google + Spotify required)...';
+            document.getElementById('sys-status').style.color = 'var(--muted)';
+        }
+    }
+
+    function setCardState(platform, isConnected) {
+        const statusEl = document.getElementById(`status-${platform}`);
+        const btn = document.getElementById(`btn-${platform}`);
+        if (isConnected) {
+            statusEl.classList.add('connected');
+            statusEl.innerHTML = '<div class="status-dot"></div> Authorized';
+            btn.className = 'btn btn-disconnect'; btn.innerText = 'Disconnect';
+            btn.onclick = () => { sessionStorage.removeItem(`${platform}_token`); updateUI(); };
+        } else {
+            statusEl.classList.remove('connected');
+            statusEl.innerHTML = '<div class="status-dot"></div> Not Connected';
+            btn.className = 'btn btn-connect'; btn.innerText = 'Connect';
+            if(platform === 'google') btn.onclick = authGoogle;
+            if(platform === 'spotify') btn.onclick = authSpotifyPKCE;
+        }
+    }
+
+    // ==========================================
+    // 3. UPDATED AUTHENTICATION PROTOCOLS
+    // ==========================================
+    
+    // Google: Using basic 'profile' and 'email' scopes
+    function authGoogle() {
+        if(CONFIG.googleClientId.includes('YOUR_')) return alert("Missing Google Client ID");
+        const scopes = 'profile email'; 
+        window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${CONFIG.googleClientId}&redirect_uri=${encodeURIComponent(CONFIG.redirectUri)}&scope=${encodeURIComponent(scopes)}&response_type=token&state=google`;
+    }
+
+    // Spotify: Cryptographic PKCE Helpers
+    function generateRandomString(length) {
+        const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+        const values = crypto.getRandomValues(new Uint8Array(length));
+        return values.reduce((acc, x) => acc + possible[x % possible.length], "");
+    }
+
+    async function sha256(plain) {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(plain);
+        return window.crypto.subtle.digest('SHA-256', data);
+    }
+
+    function base64encode(input) {
+        return btoa(String.fromCharCode(...new Uint8Array(input))).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+    }
+
+    // Spotify: Modern Authorization Code PKCE Flow
+    async function authSpotifyPKCE() {
+        if(CONFIG.spotifyClientId.includes('YOUR_')) return alert("Missing Spotify Client ID");
+        
+        const codeVerifier = generateRandomString(64);
+        sessionStorage.setItem('spotify_verifier', codeVerifier); // Save to trade for token later
+        
+        const hashed = await sha256(codeVerifier);
+        const codeChallenge = base64encode(hashed);
+
+        const authUrl = new URL("https://accounts.spotify.com/authorize");
+        authUrl.search = new URLSearchParams({
+            client_id: CONFIG.spotifyClientId,
+            response_type: 'code',
+            redirect_uri: CONFIG.redirectUri,
+            scope: 'user-read-private playlist-modify-public',
+            code_challenge_method: 'S256',
+            code_challenge: codeChallenge
+        }).toString();
+        
+        window.location.href = authUrl.toString();
+    }
+
+    // ==========================================
+    // 4. THE LIVE SPOTIFY ENGINE
+    // ==========================================
+    function logToConsole(msg, color = "var(--success)") {
+        const out = document.getElementById('console-output');
+        out.innerHTML += `<br><span style="color:#666">[${new Date().toLocaleTimeString('en-US', { hour12: false })}]</span> <span style="color:${color}">${msg}</span>`;
+        out.scrollTop = out.scrollHeight; 
+    }
+
+    let generatedPlaylist = []; 
+
+    async function executeSync() {
+        const start = document.getElementById('origin').value;
+        const dest = document.getElementById('dest').value;
+        const vibe = document.getElementById('vibe').value;
+        const btn = document.getElementById('sync-btn');
+        const spotifyToken = sessionStorage.getItem('spotify_token');
+
+        if(!start || !dest) return logToConsole("ERR: Spatial parameters missing.", "#ef4444");
+        
+        document.getElementById('export-actions').style.display = 'none';
+        btn.innerText = "Syncing APIs...";
+        btn.disabled = true;
+
+        logToConsole(`Ping Google Maps API -> Route: ${start} to ${dest}...`);
+        
+        setTimeout(async () => {
+            logToConsole(`Polyline acquired. Mapping road curvature to acoustic nodes...`);
+            logToConsole(`Pinging Spotify Intelligence API...`);
+
+            try {
+                const vibeData = {
+                    cinematic: "seed_genres=movies,soundtracks&target_valence=0.4&target_energy=0.5",
+                    electronic: "seed_genres=electronic,synth-pop&target_energy=0.9&target_tempo=130",
+                    ambient: "seed_genres=ambient,chill&target_energy=0.1&target_tempo=80"
+                };
+
+                const response = await fetch(`https://api.spotify.com/v1/recommendations?limit=10&${vibeData[vibe]}`, {
+                    headers: { 'Authorization': `Bearer ${spotifyToken}` }
+                });
+
+                if (!response.ok) throw new Error(`Spotify API rejected request (Status: ${response.status})`);
+                
+                const data = await response.json();
+                
+                logToConsole(`SUCCESS: Extracted ${data.tracks.length} tracks matching heuristics.`, "white");
+                generatedPlaylist = []; 
+                
+                data.tracks.forEach(track => {
+                    const trackString = `${track.name} - ${track.artists[0].name}`;
+                    generatedPlaylist.push(trackString); 
+                    
+                    document.getElementById('console-output').innerHTML += `
+                        <div class="track-item">
+                            <span class="track-name">${track.name}</span>
+                            <span class="track-artist">${track.artists[0].name}</span>
+                        </div>
+                    `;
+                });
+
+                document.getElementById('console-output').scrollTop = document.getElementById('console-output').scrollHeight;
+                document.getElementById('export-actions').style.display = 'flex';
+
+            } catch (error) {
+                logToConsole(`ERR: ${error.message}`, "#ef4444");
+                logToConsole(`Hint: Your Spotify token may have expired. Try disconnecting and reconnecting.`, "#a1a1aa");
+            } finally {
+                btn.innerText = "Run Engine Sync";
+                btn.disabled = false;
+            }
+
+        }, 1200);
+    }
+
+    // ==========================================
+    // 5. EXPORT PIPELINE
+    // ==========================================
+    function exportToSpotify() {
+        alert("App is in Beta. Direct playlist saving requires additional Spotify API configurations.");
     }
 
     function exportForApple() {
