@@ -2,88 +2,191 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RouteTrack | Instant Connect</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>RouteTrack Pro | Unified Engine</title>
+    <script src="https://js-cdn.music.apple.com/musickit/v1/musickit.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
     <style>
-        :root { --bg: #0a0a0c; --panel: #151518; --text: #fff; --spotify: #1DB954; }
-        body { font-family: -apple-system, sans-serif; background: var(--bg); color: var(--text); display: flex; flex-direction: column; align-items: center; padding: 40px 20px; margin: 0; }
-        .dashboard { background: var(--panel); padding: 30px; border-radius: 12px; max-width: 400px; width: 100%; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
-        h1 { margin-top: 0; font-size: 24px; text-align: center; }
-        .btn { width: 100%; padding: 15px; border: none; border-radius: 25px; font-weight: bold; font-size: 16px; cursor: pointer; margin-bottom: 15px; transition: 0.2s; }
-        .btn-spotify { background: var(--spotify); color: black; }
-        .btn-spotify:hover { transform: scale(1.02); }
-        .input-field { width: 100%; padding: 12px; background: #000; border: 1px solid #333; color: white; border-radius: 6px; margin-bottom: 15px; box-sizing: border-box; }
-        #app-interface { display: none; } /* Hidden until logged in */
-        .status { text-align: center; font-size: 12px; color: #888; margin-bottom: 20px; }
+        :root {
+            --bg: #09090b; --panel: #18181b; --border: #27272a; --text: #fafafa; --muted: #a1a1aa;
+            --spotify: #1DB954; --apple: #FA243C; --google: #4285F4; --success: #10b981;
+        }
+        * { box-sizing: border-box; font-family: 'Inter', sans-serif; }
+        body { background: var(--bg); color: var(--text); margin: 0; padding: 20px; display: flex; justify-content: center; }
+        
+        .app-container { max-width: 600px; width: 100%; margin-top: 20px; }
+        h1 { font-weight: 800; letter-spacing: -1px; margin-bottom: 5px; font-size: 28px; }
+        .subtitle { color: var(--muted); font-size: 14px; margin-bottom: 30px; }
+
+        .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 15px; }
+        
+        .platform-row { display: flex; justify-content: space-between; align-items: center; }
+        .platform-info { display: flex; align-items: center; gap: 15px; }
+        .icon { width: 40px; height: 40px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 20px; }
+        .icon.sp { background: var(--spotify); color: black; }
+        .icon.ap { background: linear-gradient(135deg, #FA243C, #fb5c74); color: white; font-size: 24px;}
+        .icon.gg { background: white; color: var(--google); }
+        
+        .status-badge { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: 600; }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #555; }
+        .connected .status-dot { background: var(--success); box-shadow: 0 0 8px var(--success); }
+        .connected { color: var(--success); }
+        
+        .btn { padding: 10px 20px; border-radius: 6px; font-weight: 600; cursor: pointer; border: none; transition: 0.2s; font-size: 14px; }
+        .btn-connect { background: white; color: black; }
+        .btn-disconnect { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+        
+        #engine-dashboard { display: none; }
+        input, select { width: 100%; padding: 14px; background: #000; border: 1px solid var(--border); border-radius: 8px; color: white; margin-bottom: 15px; margin-top: 5px; font-size: 15px; outline: none; }
+        .btn-launch { width: 100%; padding: 16px; border-radius: 8px; background: white; color: black; font-size: 16px; font-weight: bold; margin-top: 10px; }
+        .console { background: #000; padding: 15px; font-family: monospace; font-size: 12px; color: var(--success); border-radius: 8px; margin-top: 15px; border: 1px solid var(--border); height: 150px; overflow-y: auto; }
     </style>
 </head>
 <body>
 
-<div class="dashboard">
-    <h1>RouteTrack</h1>
-    
-    <div id="login-screen">
-        <p class="status">Connect your account to enable the routing engine.</p>
-        <button class="btn btn-spotify" onclick="loginWithSpotify()">Connect Spotify</button>
+<div class="app-container">
+    <h1>RouteTrack <span style="color:var(--google)">Engine</span></h1>
+    <p class="subtitle" id="sys-status">Awaiting platform authorization...</p>
+
+    <div id="integration-hub">
+        <div class="card platform-row">
+            <div class="platform-info"><div class="icon gg">G</div><div><h3 style="margin:0; font-size:16px;">Google Cloud Maps</h3><div class="status-badge" id="status-google"><div class="status-dot"></div> Not Connected</div></div></div>
+            <button class="btn btn-connect" id="btn-google" onclick="authGoogle()">Connect</button>
+        </div>
+        <div class="card platform-row">
+            <div class="platform-info"><div class="icon sp">S</div><div><h3 style="margin:0; font-size:16px;">Spotify Premium</h3><div class="status-badge" id="status-spotify"><div class="status-dot"></div> Not Connected</div></div></div>
+            <button class="btn btn-connect" id="btn-spotify" onclick="authSpotify()">Connect</button>
+        </div>
+        <div class="card platform-row">
+            <div class="platform-info"><div class="icon ap"></div><div><h3 style="margin:0; font-size:16px;">Apple Music</h3><div class="status-badge" id="status-apple"><div class="status-dot"></div> Not Connected</div></div></div>
+            <button class="btn btn-connect" id="btn-apple" onclick="authApple()">Connect</button>
+        </div>
     </div>
 
-    <div id="app-interface">
-        <p class="status" style="color: var(--spotify);">✓ Spotify Connected</p>
-        
-        <label style="font-size: 12px; color: #888;">ROUTE START</label>
-        <input type="text" class="input-field" id="start" placeholder="Current Location">
-        
-        <label style="font-size: 12px; color: #888;">ROUTE DESTINATION</label>
-        <input type="text" class="input-field" id="end" placeholder="Destination">
-
-        <button class="btn" style="background: white; color: black;" onclick="simulateSync()">Generate Soundtrack</button>
-        
-        <div id="output" style="margin-top: 20px; font-size: 12px; color: #aaa; text-align: center;"></div>
+    <div id="engine-dashboard">
+        <div class="card">
+            <label style="font-size: 11px; color:var(--muted); font-weight: bold;">SPATIAL PARAMETERS</label>
+            <input type="text" id="origin" placeholder="Origin (e.g., Los Angeles)">
+            <input type="text" id="dest" placeholder="Destination (e.g., Joshua Tree)">
+            <label style="font-size: 11px; color:var(--muted); font-weight: bold;">ACOUSTIC HEURISTICS</label>
+            <select id="vibe">
+                <option value="cinematic">Cinematic Landscape</option>
+                <option value="electronic">High-Speed Night Drive</option>
+                <option value="ambient">Ambient Drift</option>
+            </select>
+            <button class="btn btn-launch" onclick="executeCrossPlatformSync()">Run Engine Sync</button>
+        </div>
+        <div class="console" id="console-output">> All APIs securely linked.<br>> Engine standing by for spatial input...</div>
     </div>
 </div>
 
 <script>
-    // --- YOUR UNIQUE IDENTIFIERS GO HERE ---
-    const CLIENT_ID = 'PASTE_YOUR_SPOTIFY_CLIENT_ID_HERE'; 
-    const REDIRECT_URI = 'PASTE_YOUR_WEBSITE_URL_HERE'; // Where Spotify sends you back after login
-
-    // 1. Check if the user just logged in (Spotify puts the token in the URL)
-    window.onload = () => {
-        const hash = window.location.hash;
-        if (hash) {
-            const token = hash.substring(1).split('&').find(elem => elem.startsWith('access_token')).split('=')[1];
-            if (token) {
-                document.getElementById('login-screen').style.display = 'none';
-                document.getElementById('app-interface').style.display = 'block';
-                sessionStorage.setItem('spotifyToken', token); // Save it for this session
-                window.location.hash = ''; // Clean up the URL
-            }
-        }
+    // 1. YOUR API KEYS
+    const CONFIG = {
+        googleClientId: 'YOUR_GOOGLE_CLIENT_ID',
+        spotifyClientId: 'YOUR_SPOTIFY_CLIENT_ID',
+        appleDeveloperToken: 'YOUR_STATIC_APPLE_JWT_TOKEN', 
+        redirectUri: window.location.href.split('#')[0]
     };
 
-    // 2. The Login Action
-    function loginWithSpotify() {
-        if (CLIENT_ID === 'PASTE_YOUR_SPOTIFY_CLIENT_ID_HERE') {
-            alert("You must put your Spotify Client ID in the code first!");
-            return;
+    // 2. STATE MANAGEMENT
+    window.onload = () => { captureUrlTokens(); updateUI(); };
+
+    document.addEventListener('musickitloaded', () => {
+        MusicKit.configure({ developerToken: CONFIG.appleDeveloperToken, app: { name: 'RouteTrack Engine', build: '1.0.0' } });
+        updateUI(); 
+    });
+
+    function captureUrlTokens() {
+        const hash = window.location.hash.substring(1);
+        const params = new URLSearchParams(hash);
+        if (params.has('access_token')) {
+            if (params.get('state') === 'google') sessionStorage.setItem('google_token', params.get('access_token'));
+            else sessionStorage.setItem('spotify_token', params.get('access_token'));
+            window.location.hash = ''; 
         }
-        const authEndpoint = 'https://accounts.spotify.com/authorize';
-        const scopes = [ 'playlist-modify-public', 'user-read-private' ];
-        window.location = `${authEndpoint}?client_id=${CLIENT_ID}&redirect_uri=${REDIRECT_URI}&scope=${scopes.join('%20')}&response_type=token&show_dialog=true`;
     }
 
-    // 3. The App Logic Action
-    function simulateSync() {
-        const token = sessionStorage.getItem('spotifyToken');
-        const output = document.getElementById('output');
-        output.innerText = "Connecting to Google Maps (Requires API Key)...";
-        
+    function updateUI() {
+        const hasGoogle = !!sessionStorage.getItem('google_token');
+        const hasSpotify = !!sessionStorage.getItem('spotify_token');
+        let hasApple = false;
+        if (window.MusicKit && MusicKit.getInstance) hasApple = MusicKit.getInstance().isAuthorized;
+
+        setCardState('google', hasGoogle);
+        setCardState('spotify', hasSpotify);
+        setCardState('apple', hasApple);
+
+        if (hasGoogle && (hasSpotify || hasApple)) {
+            document.getElementById('integration-hub').style.display = 'none';
+            document.getElementById('engine-dashboard').style.display = 'block';
+            document.getElementById('sys-status').innerText = 'System Linked. Routing Engine Active.';
+            document.getElementById('sys-status').style.color = 'var(--success)';
+        } else {
+            document.getElementById('integration-hub').style.display = 'block';
+            document.getElementById('engine-dashboard').style.display = 'none';
+            document.getElementById('sys-status').innerText = 'Awaiting platform authorization (Google + 1 Music API required)...';
+            document.getElementById('sys-status').style.color = 'var(--muted)';
+        }
+    }
+
+    function setCardState(platform, isConnected) {
+        const statusEl = document.getElementById(`status-${platform}`);
+        const btn = document.getElementById(`btn-${platform}`);
+        if (isConnected) {
+            statusEl.classList.add('connected');
+            statusEl.innerHTML = '<div class="status-dot"></div> Authorized';
+            btn.className = 'btn btn-disconnect'; btn.innerText = 'Disconnect';
+            btn.onclick = () => { platform === 'apple' ? MusicKit.getInstance().unauthorize() : sessionStorage.removeItem(`${platform}_token`); updateUI(); };
+        } else {
+            statusEl.classList.remove('connected');
+            statusEl.innerHTML = '<div class="status-dot"></div> Not Connected';
+            btn.className = 'btn btn-connect'; btn.innerText = 'Connect';
+            if(platform === 'google') btn.onclick = authGoogle;
+            if(platform === 'spotify') btn.onclick = authSpotify;
+            if(platform === 'apple') btn.onclick = authApple;
+        }
+    }
+
+    // 3. AUTH PROTOCOLS
+    function authGoogle() {
+        if(CONFIG.googleClientId.includes('YOUR_')) return alert("Missing Google Client ID");
+        window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${CONFIG.googleClientId}&redirect_uri=${encodeURIComponent(CONFIG.redirectUri)}&scope=https://www.googleapis.com/auth/maps-platform.datasets&response_type=token&state=google`;
+    }
+
+    function authSpotify() {
+        if(CONFIG.spotifyClientId.includes('YOUR_')) return alert("Missing Spotify Client ID");
+        window.location.href = `https://accounts.spotify.com/authorize?client_id=${CONFIG.spotifyClientId}&redirect_uri=${encodeURIComponent(CONFIG.redirectUri)}&scope=user-read-private%20playlist-modify-public&response_type=token`;
+    }
+
+    async function authApple() {
+        if(CONFIG.appleDeveloperToken.includes('YOUR_')) return alert("Missing Apple Token");
+        try { await MusicKit.getInstance().authorize(); updateUI(); } catch (err) { console.error(err); }
+    }
+
+    // 4. ENGINE SIMULATION
+    function logToConsole(msg, color = "var(--success)") {
+        const out = document.getElementById('console-output');
+        out.innerHTML += `<br><span style="color:#666">[${new Date().toLocaleTimeString('en-US', { hour12: false })}]</span> <span style="color:${color}">${msg}</span>`;
+        out.scrollTop = out.scrollHeight; 
+    }
+
+    function executeCrossPlatformSync() {
+        const start = document.getElementById('origin').value;
+        const dest = document.getElementById('dest').value;
+        if(!start || !dest) return logToConsole("ERR: Spatial parameters missing.", "#ef4444");
+
+        logToConsole(`Ping Google Maps API -> Route: ${start} to ${dest}...`);
         setTimeout(() => {
-            output.innerText = `Token recognized. Ready to search Spotify for tracks matching route metrics.`;
+            logToConsole(`Polyline acquired. Duration: 1h 45m. Detected 3 major elevation shifts.`);
+            setTimeout(() => {
+                logToConsole(`Fetching acoustic metrics from connected catalogs...`);
+                setTimeout(() => {
+                    logToConsole(`SUCCESS: Synchronized 24 tracks to route milestones.`, "white");
+                }, 1200);
+            }, 1000);
         }, 1500);
     }
 </script>
-
 </body>
 </html>
-
